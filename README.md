@@ -40,3 +40,13 @@ morning of 05/14/20). Makes the process faster and allows working outside the ne
 * Check NWB.ipynb - A reproduction of the ophys tutorial notebook but using the NWB 2.0 files.
 * limsdb2_props.json - properties for connecting to the lims database
 
+### TO-DO:
+
+* Missing metadata values: __device__, __fov__, __pipeline_version__, __session_type__, specimen_name__.
+* Need to better parse stimulus table:
+  * Figure out appropiate __stimulus_name__ values?
+  * Probably need to differentiate different types of stimulus when __sweep_number__ == -1
+* Find __roi_ids__
+* Find/calculate __neuropil_r__
+* To implement __get_corrected_fluorescence_traces()__ need to figure out __neuropil_r__ and __pipeline_version__
+* Implement eye-tracking (__get_pupil_location()__ and __get_pupil_size()__)
