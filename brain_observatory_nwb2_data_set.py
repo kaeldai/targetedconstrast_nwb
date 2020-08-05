@@ -90,7 +90,7 @@ class BrainObservatoryNwb2DataSet(object):
         start_times = []
         stop_times = []
         stimulus_names = []
-        for grp_key, grp_df in stim_table_df.groupby(['stimulus_block', 'stimulus']):
+        for grp_key, grp_df in stim_table_df.groupby(['stimulus']):
             stimulus_names.append(grp_key[1])
             start_times.append(grp_df['start'].min())
             stop_times.append(grp_df['end'].max())
@@ -133,9 +133,9 @@ class BrainObservatoryNwb2DataSet(object):
     def get_locally_sparse_noise_stimulus_template(self, stimulus, mask_off_screen=True):
         raise NotImplementedError()
 
-    def _get_roi_responses_helper(self, cell_specimen_ids, response_series):
+    def _get_roi_responses_helper(self, cell_specimen_ids, response_series, data_interface='Fluorescence'):
         """A helper fnc for getting different types of roi_traces data"""
-        raw_traces_mod = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE].data_interfaces['Fluorescence'].roi_response_series[response_series]
+        raw_traces_mod = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE].data_interfaces[data_interface].roi_response_series[response_series]
         rois = raw_traces_mod.rois.table.id[()]
         if cell_specimen_ids is None:
             raw_traces = raw_traces_mod.data[()]
@@ -336,6 +336,18 @@ class BrainObservatoryNwb2DataSet(object):
 
         return event_amps
 
+    def get_l0_dff_events(self, cell_specimen_ids=None):
+        raw_traces = self._get_roi_responses_helper(cell_specimen_ids, 'dff_events', data_interface='l0_events')
+        timestamps = self.get_fluorescence_timestamps()
+
+        return timestamps, raw_traces
+
+    def get_l0_true_false_events(self, cell_specimen_ids=None):
+        raw_traces = self._get_roi_responses_helper(cell_specimen_ids, 'true_false_events', data_interface='l0_events')
+        timestamps = self.get_fluorescence_timestamps()
+
+        return timestamps, raw_traces
+
 
 def align_running_speed(dxcm, dxtime, timestamps):
     ''' If running speed timestamps differ from fluorescence
@@ -355,3 +367,20 @@ def align_running_speed(dxcm, dxtime, timestamps):
         dxcm = np.append(dxcm, np.repeat(np.NaN, adjust))
 
     return dxcm, dxtime
+
+
+if __name__ == '__main__':
+    import matplotlib.pyplot as plt
+
+    nwb_session_path = 'output/682746585.nwb'
+    data_set = BrainObservatoryNwb2DataSet(nwb_session_path)
+    selected_cell_id = np.random.choice(data_set.get_cell_specimen_ids(), size=1)[0]
+    times, dff_events = data_set.get_l0_dff_events(cell_specimen_ids=[selected_cell_id])
+    plt.figure()
+    plt.plot(times, dff_events[0])
+
+    times, true_false_events = data_set.get_l0_true_false_events(cell_specimen_ids=[selected_cell_id])
+    plt.figure()
+    plt.plot(times, true_false_events[0], '.')
+
+    plt.show()

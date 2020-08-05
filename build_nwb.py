@@ -13,6 +13,9 @@ from ophys_session import OphysSession, OphysSessionAtHome
 logger = logging.getLogger(__name__)
 
 
+pd.set_option('display.max_columns', None)
+
+
 def add_motion_correction_cis(session, ophys_module, nwbfile):
     corrected_image_series = pynwb.image.ImageSeries(
         name="motion_corrected_movie",
@@ -67,6 +70,50 @@ def add_motion_correction_pm(session, ophys_module, nwbfile):
     )
 
     ophys_module.add_data_interface(xy_mc)
+
+
+def add_events_discrete(session, ophys_module, nwbfile):
+    nwbfile.units = pynwb.misc.Units.from_dataframe(session.units, name='units')
+    # events_indices = session.event_indices
+    nwbfile.units.add_column(
+        name='event_times',
+        data=session.event_times,
+        index=session.event_indices,
+        description='times (s) of detected L0 events'
+    )
+
+    nwbfile.units.add_column(
+        name='event_amplitudes',
+        data=session.event_amps,
+        index=session.event_indices,
+        description='amplitudes (s) of detected L0 events'
+    )
+
+
+def add_events_contiguous(session, ophys_module, nwbfile, roi_table):
+    nwbfile.units = pynwb.misc.Units.from_dataframe(session.units, name='units')
+
+    l0_events = pynwb.ophys.Fluorescence(name='l0_events')
+    ophys_module.add_data_interface(l0_events)
+
+    dff_events = session.l0_events_dff
+    l0_events.create_roi_response_series(
+        name='dff_events',
+        data=dff_events,
+        rois=roi_table,
+        unit='lumens',
+        timestamps=session.twop_timestamps[:dff_events.shape[1]]
+    )
+
+    true_false_events = session.l0_events_true_false
+    l0_events.create_roi_response_series(
+        name='true_false_events',
+        data=true_false_events,
+        rois=roi_table,
+        unit='lumens',
+        timestamps=session.twop_timestamps[:true_false_events.shape[1]]
+    )
+
 
 def add_eye_tracking(session, ophys_module):
     raw_gaze_mapping_mod = pynwb.ProcessingModule(name='raw_gaze_mapping',
@@ -235,22 +282,25 @@ def create_nwb_file(session, nwb_file_path):
     nwbfile.subject = subject_metadata
 
     ### Events ###
-    pd.set_option('display.max_columns', None)
-    nwbfile.units = pynwb.misc.Units.from_dataframe(session.units, name='units')
-    # events_indices = session.event_indices
-    nwbfile.units.add_column(
-        name='event_times',
-        data=session.event_times,
-        index=session.event_indices,
-        description='times (s) of detected L0 events'
-    )
+    # add_events_discrete(session=session, ophys_module=ophys_module, nwbfile=nwbfile)
+    add_events_contiguous(session=session, ophys_module=ophys_module, nwbfile=nwbfile, roi_table=rt_region)
 
-    nwbfile.units.add_column(
-        name='event_amplitudes',
-        data=session.event_amps,
-        index=session.event_indices,
-        description='amplitudes (s) of detected L0 events'
-    )
+    # pd.set_option('display.max_columns', None)
+    # nwbfile.units = pynwb.misc.Units.from_dataframe(session.units, name='units')
+    # # events_indices = session.event_indices
+    # nwbfile.units.add_column(
+    #     name='event_times',
+    #     data=session.event_times,
+    #     index=session.event_indices,
+    #     description='times (s) of detected L0 events'
+    # )
+    #
+    # nwbfile.units.add_column(
+    #     name='event_amplitudes',
+    #     data=session.event_amps,
+    #     index=session.event_indices,
+    #     description='amplitudes (s) of detected L0 events'
+    # )
 
     ### Eye Tracking ###
     eye_dlc_path = session.eye_dlc_screen_mapping

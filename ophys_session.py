@@ -83,18 +83,25 @@ class OphysSession(object):
         stim_table_path = os.path.join(self._stimulus_table_dir, '{}_stim_table.csv'.format(self.session_id))
         stim_table_df = pd.read_csv(stim_table_path, index_col=0)
 
-        stim_table_df = stim_table_df.rename(columns={'Start': 'start_time', 'End': 'stop_time'})
-        if 'stimulus_name' not in stim_table_df:
-            # Assign a stimulus_name column TODO: Differentiate between real contrast and grey screens
-            stim_table_df['stimulus_name'] = 'Contrast'
+        stim_table_df = stim_table_df.rename(columns={
+            'Start': 'start_time',
+            'End': 'stop_time',
+            'TF': 'temporal_frequency',
+            'SF': 'spatial_frequency',
+            'Contrast': 'contrast',
+            'Ori': 'direction'
+        })
+        stim_table_df['stimulus_name'] = 'contrast tuning'
 
-        if 'stimulus_block' not in stim_table_df:
-            # Adds the appropiate stimulus block number to each interval. Assign value of 1 to every row where
-            # 'stimulus_name' changes, then do cumulative sum down the rows
-            stim_table_df['stimulus_block'] = (
-                    stim_table_df['stimulus_name'] != stim_table_df['stimulus_name'].shift(1)
-            ).cumsum()
-            stim_table_df['stimulus_block'] -= 1  # blocks should be 0 indexed
+        stim_table_df = stim_table_df.drop('sweep_number', axis=1)
+        ## Don't use stimulus block
+        # if 'stimulus_block' not in stim_table_df:
+        #     # Adds the appropiate stimulus block number to each interval. Assign value of 1 to every row where
+        #     # 'stimulus_name' changes, then do cumulative sum down the rows
+        #     stim_table_df['stimulus_block'] = (
+        #             stim_table_df['stimulus_name'] != stim_table_df['stimulus_name'].shift(1)
+        #     ).cumsum()
+        #     stim_table_df['stimulus_block'] -= 1  # blocks should be 0 indexed
 
         return stim_table_df
 
@@ -288,24 +295,42 @@ class OphysSession(object):
     @property
     def event_times(self):
         if self._event_times is None:
-            self._caclculate_events()
+            self._calculate_events()
         return self._event_times
+
+    @lazy_property
+    def l0_events_dff(self):
+        dff_amps_exp = os.path.join(self._events_dir, '{}_*_dff.npz'.format(self.session_id))
+        dff_amps_path = list(glob.glob(dff_amps_exp))
+        assert(len(dff_amps_path) == 1)
+        dff_amps_path = dff_amps_path[0]
+        dff_amps = np.load(dff_amps_path)
+        return dff_amps['dff'][self.valid_roi_indices, :]
 
     @property
     def event_amps(self):
         if self._event_amps is None:
-            self._caclculate_events()
+            self._calculate_events()
 
         return self._event_amps
+
+    @lazy_property
+    def l0_events_true_false(self):
+        events_exp = os.path.join(self._events_dir, '{}_*_False_True_events.npz'.format(self.session_id))
+        events_path = list(glob.glob(events_exp))
+        assert(len(events_path) == 1)
+        events_path = events_path[0]
+        tf_events = np.load(events_path)
+        return tf_events['ev'][self.valid_roi_indices, :]
 
     @property
     def event_indices(self):
         if self._event_indices is None:
-            self._caclculate_events()
+            self._calculate_events()
 
         return self._event_indices
 
-    def _caclculate_events(self):
+    def _calculate_events(self):
         events_exp = os.path.join(self._events_dir, '{}_*_False_True_events.npz'.format(self.session_id))
         events_path = list(glob.glob(events_exp))
         assert(len(events_path) == 1)
@@ -321,6 +346,7 @@ class OphysSession(object):
         cells_counts = []
         all_amps = []
         all_times = []
+
         for _, row in self.roi_metrics.iterrows():
             row_idx = row['unfiltered_cell_index']
             event_indices = np.nonzero(tf_events['ev'][row_idx, :])[0]
