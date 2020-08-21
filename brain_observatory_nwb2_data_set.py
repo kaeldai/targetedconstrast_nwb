@@ -12,6 +12,7 @@ pd.set_option('display.max_columns', None)
 
 class BrainObservatoryNwb2DataSet(object):
     BRAIN_OBSERVATORY_PIPELINE = 'brain_observatory_pipeline'
+    MODULE_EYE_TRACKING = 'EyeBehavior'
 
 
     def __init__(self, nwb_file):
@@ -50,9 +51,9 @@ class BrainObservatoryNwb2DataSet(object):
 
             # Missing data
             'device': None,
-            'experiment_container_id': None,
+            #  'experiment_container_id': None,  # removed by Saskia
             'fov': None,
-            'pipeline_version': None,
+            #  'pipeline_version': None,  # removed by Saskia
             'session_type': None,
             'specimen_name': None,
         }
@@ -108,15 +109,21 @@ class BrainObservatoryNwb2DataSet(object):
 
         :return: list of strings
         """
-        stim_table_df = self._get_stimulus_table_df()
-        return list(stim_table_df['stimulus'].unique())
+        ## Saskia wanted to get rid of the "stimulus" column.
+        # stim_table_df = self._get_stimulus_table_df()
+        # return list(stim_table_df['stimulus'].unique())
+        raise NotImplementedError()
 
-    def get_stimulus_table(self, stimulus_name):
-        stim_table_df = self._get_stimulus_table_df()
-        if stimulus_name not in stim_table_df['stimulus'].values:
-            raise IOError("Could not find a stimulus named '{}'".format(stimulus_name))
-        else:
-            return stim_table_df[stim_table_df['stimulus'] == stimulus_name]
+
+    def get_stimulus_table(self):
+        ## 'stimuls' column was removed
+        # stim_table_df = self._get_stimulus_table_df()
+        # if stimulus_name not in stim_table_df['stimulus'].values:
+        #     raise IOError("Could not find a stimulus named '{}'".format(stimulus_name))
+        # else:
+        #     return stim_table_df[stim_table_df['stimulus'] == stimulus_name]
+        return self._get_stimulus_table_df()
+
 
     @property
     def stimulus_search(self):
@@ -190,7 +197,9 @@ class BrainObservatoryNwb2DataSet(object):
         (default) then results for all are returned
         :return: 1D numpy array, len(r)=len(cell_specimen_ids) Scalar for neuropil subtraction for each cell
         """
-        raise NotImplementedError()
+        plane_seg_df = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE].data_interfaces['ImageSegmentation']['PlaneSegmentation'].to_dataframe()
+        return plane_seg_df.loc[cell_specimen_ids]['neuropil_r'].values
+
 
     def get_demixed_traces(self, cell_specimen_ids=None):
         """Returns an array of demixed fluorescence traces for all ROIs and the timestamps for each datapoint
@@ -281,18 +290,51 @@ class BrainObservatoryNwb2DataSet(object):
 
         return roi_array
 
-
     def get_running_speed(self):
-        running_speed_series = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE]['BehavioralTimeSeries'].get_timeseries('running_speed')
+        running_speed_series = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE]['RunningBehavior'].get_timeseries('running_speed')
         dxcm = running_speed_series.data[()]
         dxtime = running_speed_series.timestamps[()]
         return dxcm, dxtime
 
+    @property
+    def has_eye_tracking(self):
+        return self.MODULE_EYE_TRACKING in self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE].data_interfaces
+
     def get_pupil_location(self, as_spherical=True):
-        raise NotImplementedError()
+        if not self.has_eye_tracking:
+            raise ValueError('Session does not contain eye tracking data.')
+
+        screen_coords_name = 'screen_coordinates_spherical' if as_spherical else 'screen_coordinates'
+        if not screen_coords_name in self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE][self.MODULE_EYE_TRACKING].time_series:
+            # Some data might not contain non-spherical coordinates
+            raise ValueError('Could not find {}spherical pupil coordinates'.format('' if as_spherical else 'non-'))
+
+        screen_coords = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE][self.MODULE_EYE_TRACKING].get_timeseries(screen_coords_name)
+        coords = np.array(screen_coords.data).T
+        timestamps = np.array(screen_coords.timestamps)
+
+        return timestamps, coords
 
     def get_pupil_size(self):
-        raise NotImplementedError()
+        if not self.has_eye_tracking:
+            raise ValueError('Session does not contain eye tracking data.')
+
+        pupil_size_mod = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE][self.MODULE_EYE_TRACKING].get_timeseries('pupil_area')
+        pupil_data = np.array(pupil_size_mod.data)
+        timestamps = np.array(pupil_size_mod.timestamps)
+
+        return timestamps, pupil_data
+
+    def get_eye_area(self):
+        if not self.has_eye_tracking:
+            raise ValueError('Session does not contain eye tracking data.')
+
+        eye_area_mod = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE][self.MODULE_EYE_TRACKING].get_timeseries('eye_area')
+        area_data = np.array(eye_area_mod.data)
+        timestamps = np.array(eye_area_mod.timestamps)
+
+        return timestamps, area_data
+
 
     def get_motion_correction(self):
         mc_module = self.nwb_session.modules[self.BRAIN_OBSERVATORY_PIPELINE]['MotionCorrection']
@@ -372,15 +414,41 @@ def align_running_speed(dxcm, dxtime, timestamps):
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
-    nwb_session_path = 'output/682746585.nwb'
+    # nwb_session_path = 'output/682746585.nwb'
+    nwb_session_path = 'output/694856258.nwb'
     data_set = BrainObservatoryNwb2DataSet(nwb_session_path)
     selected_cell_id = np.random.choice(data_set.get_cell_specimen_ids(), size=1)[0]
-    times, dff_events = data_set.get_l0_dff_events(cell_specimen_ids=[selected_cell_id])
-    plt.figure()
-    plt.plot(times, dff_events[0])
+    # times, dff_events = data_set.get_l0_dff_events(cell_specimen_ids=[selected_cell_id])
+    # plt.figure()
+    # plt.plot(times, dff_events[0])
+    #
+    # times, true_false_events = data_set.get_l0_true_false_events(cell_specimen_ids=[selected_cell_id])
+    # plt.figure()
+    # plt.plot(times, true_false_events[0], '.')
+    #
+    # plt.show()
 
-    times, true_false_events = data_set.get_l0_true_false_events(cell_specimen_ids=[selected_cell_id])
-    plt.figure()
-    plt.plot(times, true_false_events[0], '.')
+    # print(data_set.get_neuropil_r(cell_specimen_ids=[selected_cell_id]))
+    if data_set.has_eye_tracking:
+        timestamps, coords = data_set.get_pupil_location()
+        # plt.figure()
+        # plt.plot(timestamps, coords[0], label='azimuth')
+        # plt.plot(timestamps, coords[1], label='altitude')
+        # plt.legend()
+        # plt.title('Eye Position')
+        # plt.ylabel('Angle (degrees)')
 
-    plt.show()
+        timestamps, pupil_area = data_set.get_pupil_size()
+        plt.figure()
+        plt.plot(timestamps, pupil_area)
+        plt.ylabel('area (pixels)')
+        plt.title('Pupil Size')
+
+
+        timestamps, eye_area = data_set.get_eye_area()
+        plt.figure()
+        plt.plot(timestamps, eye_area)
+        plt.ylabel('area (pixels)')
+        plt.title('Eye area')
+
+        plt.show()

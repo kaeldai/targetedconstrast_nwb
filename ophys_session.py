@@ -28,12 +28,16 @@ class OphysSession(object):
 
         self._stimulus_table_dir = '/allen/programs/braintv/workgroups/nc-ophys/VisualCoding/stimulus_tables'
         self._events_dir = '/allen/programs/braintv/workgroups/nc-ophys/VisualCoding/events'
+        self._running_speeds_dir = '/allen/programs/braintv/workgroups/nc-ophys/VisualCoding/contrast_running_speeds'
         self._lims_reader = lims_reader
 
         # event times and amplitudes are linked together
         self._event_times = None
         self._event_amps = None
         self._event_indices = None
+
+        # Need to track of all (incl. invalid) ROIs and the order the appear in from objectlist.txt
+        self._all_oris_order = None
 
     @lazy_property
     def description(self):
@@ -91,10 +95,11 @@ class OphysSession(object):
             'Contrast': 'contrast',
             'Ori': 'direction'
         })
-        stim_table_df['stimulus_name'] = 'contrast tuning'
+        ### Note from Saskia, wanted to remove stimulus_name
+        # stim_table_df['stimulus_name'] = 'contrast tuning'
 
         stim_table_df = stim_table_df.drop('sweep_number', axis=1)
-        ## Don't use stimulus block
+        ### Note from Saskia, Don't use stimulus block
         # if 'stimulus_block' not in stim_table_df:
         #     # Adds the appropiate stimulus block number to each interval. Assign value of 1 to every row where
         #     # 'stimulus_name' changes, then do cumulative sum down the rows
@@ -144,6 +149,14 @@ class OphysSession(object):
         return 5.5036
 
     @lazy_property
+    def depth(self):
+        return self.experiment_metadata["depth"]
+
+    @lazy_property
+    def fov(self):
+        return 400, 400
+
+    @lazy_property
     def roi_metrics(self):
         roi_metrics_path = self._lims_reader.get_file(session_id=self.session_id, file_type='OphysSegmentationObjects')
         assert(os.path.exists(roi_metrics_path))
@@ -152,6 +165,7 @@ class OphysSession(object):
         tracs_json_path = self._lims_reader.get_file(session_id=self.session_id,
                                                      file_type='OphysExtractedTracesInputJson')
         assert(os.path.exists(tracs_json_path))
+
         traces_json = json.load(open(tracs_json_path, 'r'))
 
         # image_height = traces_json["image"]["height"]
@@ -184,8 +198,13 @@ class OphysSession(object):
 
         roi_metrics["cell_specimen_id"] = specimen_ids
         roi_metrics["id"] = roi_metrics['cell_specimen_id'].values
+
         roi_metrics = pd.merge(roi_metrics, roi_locations, on="id")
-        roi_metrics = roi_metrics[roi_metrics.valid == True]
+
+        # Due to an issue that sometimes occurs with l0_true_false events we need to keep of all the ROIs and the
+        #  order they appear before we filter out the invalid ones.
+        self._all_oris_order = np.array(roi_metrics['id'])
+        roi_metrics = roi_metrics[roi_metrics.valid]
 
         cell_index = [np.where(np.sort(roi_metrics.cell_specimen_id.values) == rid)[0][0]
                       for rid in roi_metrics.cell_specimen_id.values]
@@ -208,8 +227,23 @@ class OphysSession(object):
 
         return roi_masks
 
+    @property
+    def all_rois(self):
+        if self._all_oris_order is None:
+            _ = self.roi_metrics
+
+        return self._all_oris_order
+
+    @lazy_property
+    def neuropil_r(self):
+        neuropil_corr_path = self._lims_reader.get_file(session_id=self.session_id, file_type='NeuropilCorrection')
+        neuropil_corr_df = h5py.File(neuropil_corr_path, 'r')
+        neuropil_r = neuropil_corr_df['r'][()]
+        return neuropil_r[self.valid_roi_indices]
+
     @lazy_property
     def valid_roi_indices(self):
+        # WARNING: the index
         return np.sort(self.roi_metrics['unfiltered_cell_index'].values)
 
     @lazy_property
@@ -224,7 +258,8 @@ class OphysSession(object):
 
     @lazy_property
     def twop_timestamps(self):
-        return self.time_sync['twop_vsync_fall'][()]
+        # return self.time_sync['twop_vsync_fall'][()]
+        return np.array(self.time_sync['twop_vsync_fall'], dtype=np.float64)
 
     @lazy_property
     def raw_traces(self):
@@ -252,13 +287,30 @@ class OphysSession(object):
         dff_traces_path = self._lims_reader.get_file(session_id=self.session_id, file_type='OphysDffTraceFile')
         dff_h5 = h5py.File(dff_traces_path, 'r')
         dff_traces = dff_h5['data'][()]
+        # print(np.isnan(dff_traces).any())
+        # print(np.count_nonzero(np.isnan(dff_traces)))
         return dff_traces[self.valid_roi_indices, :]
 
     @lazy_property
     def running_velocity(self):
-        running_dx = self.stimulus_pkl['items']['foraging']['encoders'][0]['dx']
+        running_speed_file = os.path.join(self._running_speeds_dir, '{}_running_speed.npy'.format(self.session_id))
+        if not os.path.exists(running_speed_file):
+            raise FileNotFoundError('Could not find running_speeds file {}'.format(running_speed_file))
+
+        running_speeds = np.load(running_speed_file)
+        running_speeds = running_speeds.flatten()
+
+        padding_len = self.dff_traces.shape[1] - running_speeds.shape[0]
+        if padding_len < 0:
+            raise ValueError('Session {} running speed is greater than the dff_trace length'.format(self.session_id))
+
+        elif padding_len > 0:
+            padding = np.empty(padding_len)
+            padding[:] = np.nan
+            running_speeds = np.append(running_speeds, padding, axis=0)
+
         fps = self.stimulus_pkl['fps']
-        return running_dx * fps * (2*np.pi*self.wheel_radius/360.0)
+        return running_speeds * fps * (2*np.pi*self.wheel_radius/360.0)
 
     @lazy_property
     def stimulus_timestamps(self):
@@ -305,6 +357,7 @@ class OphysSession(object):
         assert(len(dff_amps_path) == 1)
         dff_amps_path = dff_amps_path[0]
         dff_amps = np.load(dff_amps_path)
+        # print(np.cumsum(np.isnan(dff_amps['dff']).any(axis=1)))
         return dff_amps['dff'][self.valid_roi_indices, :]
 
     @property
@@ -320,8 +373,23 @@ class OphysSession(object):
         events_path = list(glob.glob(events_exp))
         assert(len(events_path) == 1)
         events_path = events_path[0]
-        tf_events = np.load(events_path)
-        return tf_events['ev'][self.valid_roi_indices, :]
+        tf_events = np.load(events_path)['ev']
+
+        if tf_events.shape[0] < len(self.all_rois):
+            dff_amps_exp = os.path.join(self._events_dir, '{}_*_dff.npz'.format(self.session_id))
+            dff_amps_path = list(glob.glob(dff_amps_exp))[0]
+            # dff_amps_path = dff_amps_path[0]
+            dff_amps = np.load(dff_amps_path)['dff']
+            nan_rows = np.isnan(dff_amps).any(axis=1)
+
+            # n_nan_rows = np.count_nonzero(np.isnan(dff_amps).any(axis=1))
+            assert(tf_events.shape[0] + np.count_nonzero(nan_rows) == len(self.all_rois))
+
+            missing_rows_offsets = np.cumsum(nan_rows)
+            fixed_valid_rois = self.valid_roi_indices - missing_rows_offsets[self.valid_roi_indices]
+            return tf_events[fixed_valid_rois, :]
+
+        return tf_events[self.valid_roi_indices, :]
 
     @property
     def event_indices(self):
@@ -329,6 +397,46 @@ class OphysSession(object):
             self._calculate_events()
 
         return self._event_indices
+
+    @property
+    def has_eye_tracking(self):
+        return self.eye_dlc_screen_mapping is not None
+
+    @lazy_property
+    def aligned_eye_tracking_data(self):
+        if not self.has_eye_tracking:
+            return None
+        else:
+            dlc_h5 = h5py.File(self.eye_dlc_screen_mapping, 'r')
+
+            pupil_area = dlc_h5['raw_pupil_areas']['values'][()]
+            eye_area = dlc_h5['raw_eye_areas']['values'][()]
+            pos = pd.read_hdf(self.eye_dlc_screen_mapping, 'raw_screen_coordinates_spherical')
+
+            eye_frames = self.time_sync['eye_tracking_alignment'][()].astype(np.int)
+            eye_frames = eye_frames[np.where(eye_frames > 0)]
+
+            eye_area_sync = eye_area[eye_frames]
+            pupil_area_sync = pupil_area[eye_frames]
+            x_pos_sync = pos['x_pos_deg'].values[eye_frames]
+            y_pos_sync = pos['y_pos_deg'].values[eye_frames]
+
+            # correcting dropped camera frames
+            test = eye_frames[np.isfinite(eye_frames)]
+            test = test.astype(int)
+            temp2 = np.bincount(test)
+            dropped_camera_frames = np.where(temp2 > 2)[0]
+            for a in dropped_camera_frames:
+                null_2p_frames = np.where(eye_frames == a)[0]
+                eye_area_sync[null_2p_frames] = np.NaN
+                pupil_area_sync[null_2p_frames] = np.NaN
+                x_pos_sync[null_2p_frames] = np.NaN
+                y_pos_sync[null_2p_frames] = np.NaN
+
+            eye_sync = pd.DataFrame(data=np.vstack((eye_area_sync, pupil_area_sync, x_pos_sync, y_pos_sync)).T,
+                                    columns=('eye_area', 'pupil_area', 'x_pos_deg', 'y_pos_deg'))
+            return eye_sync
+
 
     def _calculate_events(self):
         events_exp = os.path.join(self._events_dir, '{}_*_False_True_events.npz'.format(self.session_id))
@@ -370,6 +478,7 @@ class OphysSessionAtHome(OphysSession):
         super(OphysSessionAtHome, self).__init__(session_id, lims_reader)
         self._stimulus_table_dir = '/data/visual_coding/stimulus_tables/'
         self._events_dir = '/data/visual_coding/events'
+        self._running_speeds_dir = '/data/visual_coding/contrast_running_speeds'
 
     @lazy_property
     def session_metadata(self):
