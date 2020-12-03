@@ -88,11 +88,14 @@ class OphysSession(object):
 
         stim_table_df = stim_table_df.rename(columns={
             'Start': 'start_time',
+            'start': 'start_time',
             'End': 'stop_time',
+            'end': 'stop_time',
             'TF': 'temporal_frequency',
             'SF': 'spatial_frequency',
             'Contrast': 'contrast',
-            'Ori': 'direction'
+            'Ori': 'direction',
+            'orientation': 'direction'
         })
         ### Note from Saskia, wanted to remove stimulus_name
         # stim_table_df['stimulus_name'] = 'contrast tuning'
