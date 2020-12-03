@@ -51,7 +51,6 @@ class OphysSession(object):
     @lazy_property
     def stimulus_pkl(self):
         stim_pkl_path = self._lims_reader.get_file(session_id=self.session_id, file_type='StimulusPickle')
-
         with open(stim_pkl_path, 'rb') as f:
             try:
                 return pickle.load(f)
@@ -258,7 +257,6 @@ class OphysSession(object):
 
     @lazy_property
     def twop_timestamps(self):
-        # return self.time_sync['twop_vsync_fall'][()]
         return np.array(self.time_sync['twop_vsync_fall'], dtype=np.float64)
 
     @lazy_property
@@ -287,30 +285,54 @@ class OphysSession(object):
         dff_traces_path = self._lims_reader.get_file(session_id=self.session_id, file_type='OphysDffTraceFile')
         dff_h5 = h5py.File(dff_traces_path, 'r')
         dff_traces = dff_h5['data'][()]
-        # print(np.isnan(dff_traces).any())
-        # print(np.count_nonzero(np.isnan(dff_traces)))
         return dff_traces[self.valid_roi_indices, :]
 
     @lazy_property
     def running_velocity(self):
-        running_speed_file = os.path.join(self._running_speeds_dir, '{}_running_speed.npy'.format(self.session_id))
-        if not os.path.exists(running_speed_file):
-            raise FileNotFoundError('Could not find running_speeds file {}'.format(running_speed_file))
+        ##  dx_file = os.path.join(self._running_speeds_dir, '{}_running_speed.npy'.format(self.session_id))
+        ## if not os.path.exists(dx_file):
+        ##     raise FileNotFoundError('Could not find running_speeds file {}'.format(running_speed_file))
+        ## dx = np.load(dx_file)
 
-        running_speeds = np.load(running_speed_file)
-        running_speeds = running_speeds.flatten()
+        dx = self.stimulus_pkl['items']['foraging']['encoders'][0]['dx']
+        vsnync_intervals = self.stimulus_pkl['intervalsms']
+        while len(vsnync_intervals) < len(dx):
+            vsnync_intervals = np.insert(vsnync_intervals, 0, vsnync_intervals[0])
+        vsnync_intervals /= 1000
+        if len(dx) == 0:
+            logger.exception('No running data')
+        dxcm = ((dx / 360)*5.5036*np.pi*2) / vsnync_intervals
 
-        padding_len = self.dff_traces.shape[1] - running_speeds.shape[0]
+        twop_frames = self.time_sync['stimulus_alignment'][()]
+        start = np.nanmin(twop_frames)
+        endframe = int(np.nanmax(twop_frames) + 1)
+        dxds = np.empty((endframe, 1))
+
+        for i in range(endframe):
+            try:
+                temp = np.where(twop_frames == i)[0]
+                dxds[i] = np.mean(dxcm[temp[0]:temp[-1]+1])
+                if np.isinf(dxds[i]):
+                    dxds[i] = 0
+            except:
+                if i < start:
+                    dxds[i] = np.NaN
+                else:
+                    dxds[i] = dxds[i-1]
+
+        dxds = dxds.flatten()
+
+        # If running speeds array is smaller than the traces pad the end with NaNs
+        padding_len = self.dff_traces.shape[1] - dxds.shape[0]
         if padding_len < 0:
             raise ValueError('Session {} running speed is greater than the dff_trace length'.format(self.session_id))
 
         elif padding_len > 0:
             padding = np.empty(padding_len)
             padding[:] = np.nan
-            running_speeds = np.append(running_speeds, padding, axis=0)
+            dxds = np.append(dxds, padding, axis=0)
 
-        fps = self.stimulus_pkl['fps']
-        return running_speeds * fps * (2*np.pi*self.wheel_radius/360.0)
+        return dxds
 
     @lazy_property
     def stimulus_timestamps(self):
@@ -357,7 +379,6 @@ class OphysSession(object):
         assert(len(dff_amps_path) == 1)
         dff_amps_path = dff_amps_path[0]
         dff_amps = np.load(dff_amps_path)
-        # print(np.cumsum(np.isnan(dff_amps['dff']).any(axis=1)))
         return dff_amps['dff'][self.valid_roi_indices, :]
 
     @property
@@ -436,7 +457,6 @@ class OphysSession(object):
             eye_sync = pd.DataFrame(data=np.vstack((eye_area_sync, pupil_area_sync, x_pos_sync, y_pos_sync)).T,
                                     columns=('eye_area', 'pupil_area', 'x_pos_deg', 'y_pos_deg'))
             return eye_sync
-
 
     def _calculate_events(self):
         events_exp = os.path.join(self._events_dir, '{}_*_False_True_events.npz'.format(self.session_id))

@@ -134,7 +134,7 @@ def add_motion_correction_cis(session, ophys_module, nwbfile):
 def add_motion_correction_pm(session, ophys_module, nwbfile):
     xy_mc = pynwb.TimeSeries(
         name="MotionCorrection",
-        data=session.motion_correction,
+        data=session.motion_correction.T,
         timestamps=session.twop_timestamps,
         description="Number of pixels shifts measured during motion correction",
         unit="pixels",
@@ -170,7 +170,7 @@ def add_events_contiguous(session, ophys_module, nwbfile, roi_table):
     dff_events = session.l0_events_dff
     l0_events.create_roi_response_series(
         name='dff_events',
-        data=dff_events,
+        data=dff_events.T,
         rois=roi_table,
         unit='lumens',
         timestamps=session.twop_timestamps[:dff_events.shape[1]]
@@ -179,7 +179,7 @@ def add_events_contiguous(session, ophys_module, nwbfile, roi_table):
     true_false_events = session.l0_events_true_false
     l0_events.create_roi_response_series(
         name='true_false_events',
-        data=true_false_events,
+        data=true_false_events.T,
         rois=roi_table,
         unit='lumens',
         timestamps=session.twop_timestamps[:true_false_events.shape[1]]
@@ -306,7 +306,7 @@ def create_nwb_file(session, nwb_file_path):
     assert(raw_traces.shape[1] <= timestamps.shape[0])
     fluorescence.create_roi_response_series(
         name='raw_traces',
-        data=raw_traces,
+        data=raw_traces.T,  # In the NWB guidelines times should be first dimension
         rois=rt_region,
         unit='lumens',
         timestamps=timestamps[:raw_traces.shape[1]]
@@ -316,7 +316,7 @@ def create_nwb_file(session, nwb_file_path):
     assert(neuropil_traces.shape[1] <= timestamps.shape[0])
     fluorescence.create_roi_response_series(
         name='neuropil_traces',
-        data=neuropil_traces,
+        data=neuropil_traces.T,
         rois=rt_region,
         unit='lumens',
         timestamps=timestamps[:neuropil_traces.shape[1]]
@@ -326,7 +326,7 @@ def create_nwb_file(session, nwb_file_path):
     assert(demixed_traces.shape[1] <= timestamps.shape[0])
     fluorescence.create_roi_response_series(
         name='demixed_traces',
-        data=demixed_traces,
+        data=demixed_traces.T,
         rois=rt_region,
         unit='lumens',
         timestamps=timestamps[:demixed_traces.shape[1]]
@@ -336,7 +336,7 @@ def create_nwb_file(session, nwb_file_path):
     assert(dff_traces.shape[1] <= timestamps.shape[0])
     fluorescence.create_roi_response_series(
         name='DfOverF',
-        data=session.dff_traces,
+        data=dff_traces.T,
         rois=rt_region,
         unit='lumens',
         timestamps=timestamps[:dff_traces.shape[1]]
@@ -366,11 +366,11 @@ def create_nwb_file(session, nwb_file_path):
     add_motion_correction_pm(session, ophys_module, nwbfile)
 
     ### Subject and lab metadata ###
-    sex_lu = {'F': 'female', 'M': 'male'}
+    sex_lu = {'F': 'F', 'M': 'M'}
     subject_metadata = pynwb.file.Subject(
-        age=session.session_metadata['age'][1:],
+        age=session.session_metadata['age'] + 'D',
         genotype=session.session_metadata['full_genotype'],
-        sex=sex_lu.get(session.session_metadata['sex'], 'unknown'),
+        sex=sex_lu.get(session.session_metadata['sex'], 'U'),
         species='Mus musculus',
         subject_id=str(session.session_metadata['specimen_id']),
         description=session.session_metadata['name']
