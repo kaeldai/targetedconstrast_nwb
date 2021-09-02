@@ -225,6 +225,19 @@ def add_eye_tracking_interface(session, nwb_module):
     # et_module.add_data_interface(screen_coord_spherical_ts)
 
 
+def format_age_str(age_val):
+    ## converts age value to appropiate NWB representation
+    # age_val = session.session_metadata['age'])
+    if isinstance(age_val, int):
+        return 'P{}D'.format(age_val)
+
+    for weeks_str in ['wks', 'weeks']:
+        if age_val.lower().endswith(weeks_str):
+            age_rep = age_val.replace(weeks_str, '').strip()
+            return '{}W'.format(age_rep)
+
+    return '{}D'.format(age_val)
+
 
 def create_nwb_file(session, nwb_file_path):
     logger.info('Session {}: Starting'.format(session.session_id))
@@ -368,7 +381,7 @@ def create_nwb_file(session, nwb_file_path):
     ### Subject and lab metadata ###
     sex_lu = {'F': 'F', 'M': 'M'}
     subject_metadata = pynwb.file.Subject(
-        age=session.session_metadata['age'] + 'D',
+        age=format_age_str(session.session_metadata['age']),
         genotype=session.session_metadata['full_genotype'],
         sex=sex_lu.get(session.session_metadata['sex'], 'U'),
         species='Mus musculus',
